@@ -1,0 +1,199 @@
+#include "utils.h"
+#include <cuda.h>
+#include <cuda_runtime.h>
+#include <string>
+#include <fstream>
+#include <iostream>
+#include <sstream>
+#include <vector>
+#include "timer.h"
+using namespace std;
+
+void readCSV(istream &input, vector< vector<string> > &output)
+{
+   string csvLine;
+    // read every line from the stream
+    while( getline(input, csvLine) )
+    {
+            istringstream csvStream(csvLine);
+           vector<string> csvColumn;
+            string csvElement;
+            // read every element from the line that is seperated by commas
+            // and put it into the vector or strings
+            while( getline(csvStream, csvElement, ',') )
+            {
+                    csvColumn.push_back(csvElement);
+            }
+            output.push_back(csvColumn);
+    }
+}
+
+
+void get_rgba(uchar4 **d_image_rgba, uchar4 **h_image_rgba){
+
+  int rows = 313;
+  int cols = 557;
+  int ch = 4;
+  
+
+  int size = rows*cols*ch*sizeof(char);
+  uchar4 *image_rgba;
+  //*image_rgba = malloc(rows*cols*sizeof(uchar4));
+  image_rgba = (uchar4*)malloc(rows*cols*sizeof(uchar4));
+  //cudaMallocHost((void **)&image_rgba, rows*cols*sizeof(uchar4));
+  cudaMallocHost(h_image_rgba, rows*cols*sizeof(uchar4));
+  
+  int *arr;
+  arr = (int*) malloc(rows*cols*ch*sizeof(int));
+  string a;
+  fstream file("file5", ios::in);
+  if(!file.is_open()){
+    cout << "File not found!\n";
+            //return 1;
+  }
+    // typedef to save typing for the following object
+  typedef vector< vector<string> > csvVector;
+  csvVector csvData;
+  readCSV(file, csvData);
+  int index=0;
+  int x;
+  for(csvVector::iterator i = csvData.begin(); i != csvData.end(); ++i)
+  {
+    for(vector<string>::iterator j = i->begin(); j != i->end(); ++j)
+    {
+      a=*j;
+      //cout << a << " ";
+      stringstream convert(a);
+      convert>>x;
+      arr[index] = x;
+      index++;   
+    }
+  cout << "\n";
+  }
+
+//  for(int j=0; j<7; j++){
+//    cout << arr[j]<< " ";
+//  }
+//  cout << "\n";
+  
+//  for (int i = 0; i<rows*cols; i+=4){
+//    image_rgba[i].x =  arr[i];
+//    image_rgba[i].y =  arr[i+rows*cols];
+//    image_rgba[i].z =  arr[i+2*rows*cols];
+//    image_rgba[i].w =  arr[i+3*rows*cols];
+//  }  
+//  for (int i = 0; i<rows*cols; i++){
+//    image_rgba[i].x =  arr[4*i];
+//    image_rgba[i].y =  arr[4*i+1];
+//    image_rgba[i].z =  arr[4*i+2];
+//    image_rgba[i].w =  arr[4*i+3];
+//  }  
+  for (int i = 0; i<rows*cols; i++){
+    image_rgba[i].x =  arr[4*i];
+    image_rgba[i].y =  arr[4*i+1];
+    image_rgba[i].z =  arr[4*i+2];
+    image_rgba[i].w =  arr[4*i+3];
+  }  
+  //cout << arr[rows*cols+3] << " ";
+  
+  
+  
+  cout << (uint)image_rgba[0].x << " ";
+  cout << (uint)image_rgba[0].y << " ";
+  cout << (uint)image_rgba[0].z << " ";
+  cout << (uint)image_rgba[rows*cols-1].x << " ";
+  cout << (uint)image_rgba[rows*cols-1].y << " ";
+  cout << (uint)image_rgba[rows*cols-1].z << " ";
+  cudaMemcpy(*h_image_rgba,image_rgba, rows*cols*sizeof(uchar4),cudaMemcpyHostToHost);
+  cudaMalloc(d_image_rgba, rows*cols*sizeof(uchar4));
+  cudaMemcpy(*d_image_rgba,*h_image_rgba, rows*cols*sizeof(uchar4),cudaMemcpyHostToDevice);
+  //free(&arr);
+  free(image_rgba);
+}
+
+void referenceCalculation(const uchar4* const rgbaImage,
+                          unsigned char *const greyImage,
+                          size_t numRows,
+                          size_t numCols)
+{
+  for (size_t r = 0; r < numRows; ++r) {
+    for (size_t c = 0; c < numCols; ++c) {
+      uchar4 rgba = rgbaImage[r * numCols + c];
+      float channelSum = .299f * rgba.x + .587f * rgba.y + .114f * rgba.z;
+      greyImage[r * numCols + c] = channelSum;
+    }
+  }
+}
+
+
+void fromCharToText(unsigned char* h_grey, size_t rows, size_t cols){
+  ofstream outputFile("grey7.txt");
+  for(int i=0; i<cols; i++){
+    for(int j=0; j<rows; j++){
+      if((i+j)<rows+cols-2){
+        outputFile << (uint) h_grey[i*rows+j] << ",";}
+        else outputFile << (uint) h_grey[i*rows+j];
+    }
+  }
+  
+}
+
+__global__
+void gpuCalculation(uchar4* d_rgba, unsigned char* d_grey){
+
+  //int index = blockDim.x* blockIdx.y + threadIdx.x;
+  int index = blockIdx.x;
+  uchar4 rgba = d_rgba[index];
+  d_grey[index] = .299f * rgba.x + .587f * rgba.y + .114f * rgba.z;
+
+}
+int main(){
+
+  size_t rows = 313;
+  size_t cols = 557;
+  int ch = 4;
+
+  uchar4 *d_rgba;
+  uchar4 *h_rgba;
+  unsigned char *h_grey;
+  unsigned char *h_grey2;
+  unsigned char *d_grey;
+  cudaMalloc((void **)&d_grey, rows*cols*sizeof(unsigned char));
+  cudaMemset(d_grey, 0, rows*cols*sizeof(unsigned char));
+  h_grey = (unsigned char*)malloc(rows*cols*sizeof(unsigned char));
+  h_grey2 = (unsigned char*)malloc(rows*cols*sizeof(unsigned char));
+  memset(h_grey2, 0, rows*cols*sizeof(unsigned char));
+  get_rgba(&d_rgba, &h_rgba);
+  
+  GpuTimer timer;
+  timer.Start();  
+  //referenceCalculation(h_rgba, h_grey,rows, cols);
+  const dim3 blockSize(1, 1, 1);
+  const dim3 gridSize(313*557,1 , 1);
+  gpuCalculation<<<gridSize,blockSize>>>(d_rgba, d_grey);
+  cudaDeviceSynchronize(); //checkCudaErrors(cudaGetLastError());
+  timer.Stop();
+  float elapsed = timer.Elapsed();
+  cout<< elapsed << " ";
+  
+  cudaMemcpy(h_grey2, d_grey, rows*cols*sizeof(unsigned char), cudaMemcpyDeviceToHost);
+  
+  fromCharToText(h_grey2,rows, cols);
+
+
+
+  return 0;
+
+}
+
+
+
+
+
+//void fileToImage(uchar4 **rgbaImage, const std::string &filename, int rows, int cols, int ch){
+
+//  int *stream;
+//  stream = (int*) malloc()
+
+//}
+
